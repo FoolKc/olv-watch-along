@@ -63,13 +63,13 @@ def get_watching() -> str:
 @mcp.tool()
 def control_video(action: str) -> str:
     """Control the YouTube video the user is watching in their browser.
-    action must be one of: "pause", "play" (start or resume the video that is already open), "next" (skip to the next video), "previous".
-    Use this when the user asks you (in any language) to pause, play, start, resume, unpause, skip or go back. "Start the music/video" means action "play". IMPORTANT: every new request needs a new call to this tool, even if you did the same thing a moment ago. Never say you paused, played, skipped or went back unless you called this tool in this same reply; if you did not call it, nothing happened in the browser.
+    action must be one of: "pause", "play" (start or resume the video that is already open), "next" (skip to the next video), "previous", "louder" (turn the volume up), "quieter" (turn the volume down).
+    Use this when the user asks you (in any language) to pause, play, start, resume, unpause, skip, go back, or turn the volume up or down. "Start the music/video" means action "play". IMPORTANT: every new request needs a new call to this tool, even if you did the same thing a moment ago. Never say you paused, played, skipped, went back or changed the volume unless you called this tool in this same reply; if you did not call it, nothing happened in the browser.
     After it returns, tell them in one short sentence what happened, in your usual style.
     If it did not work, say so honestly. Do not call it more than once per request."""
     action = (action or "").strip().lower()
     aliases = {"resume": "play", "continue": "play", "stop": "pause", "skip": "next",
-               "back": "previous", "prev": "previous"}
+               "back": "previous", "prev": "previous", "up": "louder", "volume_up": "louder", "down": "quieter", "volume_down": "quieter"}
     action = aliases.get(action, action)
     req = urllib.request.Request(COMMAND_URL, data=json.dumps({"action": action}).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")

@@ -177,6 +177,19 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg.action === "next") {
     return Promise.resolve(goNext());
   }
+  if (msg.action === "louder") {
+    video.muted = false;
+    video.volume = Math.min(1, video.volume + 0.2);
+    return Promise.resolve("Volume is now " + Math.round(video.volume * 100) + "%");
+  }
+  if (msg.action === "quieter") {
+    // If the video is muted, leave the volume alone and just report it.
+    if (video.muted) {
+      return Promise.resolve("the video is muted, so the volume was not changed");
+    }
+    video.volume = Math.max(0, video.volume - 0.2);
+    return Promise.resolve("Volume is now " + Math.round(video.volume * 100) + "%");
+  }
   if (msg.action === "previous") {
     // After a few seconds YouTube's previous button only restarts the video: rewind first, then press it.
     video.currentTime = 0;

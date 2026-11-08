@@ -267,7 +267,7 @@ async def maybe_checkin() -> None:
 
 
 # ---------------- Playback control ----------------
-ACTIONS = ("pause", "play", "next", "previous", "search")
+ACTIONS = ("pause", "play", "next", "previous", "search", "louder", "quieter")
 COMMAND_TTL_S = 15            # a command expires if the extension does not pick it up in 15 s
 EXT_SEEN_S = 10               # extension has not polled in the last 10 s = browser not connected
 

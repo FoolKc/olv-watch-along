@@ -5,6 +5,7 @@ Your AI character sees what you are watching on YouTube, comments on it with you
 and controls playback when you ask by voice or text.
 
 > "Can you skip this song?" → the character skips it.
+> "Turn it down a bit" → the character lowers the volume and tells you the new level.
 > "Play some lo-fi" → the character searches YouTube and starts the first real video.
 > You open a new video → 15 seconds later the character says something about it.
 
@@ -15,7 +16,7 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 
 - **Knows what you are watching:** title, channel, playing/paused, description and the captions on screen.
 - **Comments on its own:** one short comment on each new video, and now and then on new captions (with cooldowns and a daily cap).
-- **Playback control:** pause, play, next, previous.
+- **Playback control:** pause, play, next, previous, volume up/down.
 - **"Play X":** searches YouTube and opens the first real result (not ads or Shorts), then tells you the actual title.
 - **Idle check-in:** after a long silence the character checks in on you (optional).
 - **Hotkeys (Windows, optional):** F9 turns comments on/off, F8 mutes the mic.
