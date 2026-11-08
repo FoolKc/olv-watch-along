@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "OLV Watch-Along",
+  "version": "0.2.1",
+  "description": "Tells a local Open-LLM-VTuber watch-along bridge (127.0.0.1 only) what you are watching on YouTube, and carries out the character's playback commands.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "watch-along@example.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "permissions": ["http://127.0.0.1/*"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

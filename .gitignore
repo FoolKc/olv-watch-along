@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.zip
+*.xpi
+*.bak
+.env
+conf.yaml
+persona*.txt
