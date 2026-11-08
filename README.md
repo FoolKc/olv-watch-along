@@ -160,6 +160,12 @@ happened, so do not say it is done.
 - YouTube changes its page layout from time to time; selectors in `content.js` may need updates.
 - State lives in memory; restarting the bridge resets it (and the daily cap).
 
+## Contributing
+
+This is my first public project, so there is surely room to improve.
+Issues, ideas and pull requests are very welcome. Feel free to fork it
+and shape it to your own setup.
+
 ## Credits
 
 - [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber) (MIT): the VTuber framework this add-on is built for.
