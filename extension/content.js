@@ -1,6 +1,8 @@
-// OLV Watch-Along - YouTube content script.
-// On /watch pages only, reads the title, channel, URL, paused state, description and
-// the captions currently on screen. It does not read comments, your account or other tabs.
+// OLV Watch-Along - core content script.
+// It does not know which site it is on: it finds the adapter that matches the page (adapters/),
+// takes the title, channel and description from it, adds the URL, paused state and captions,
+// and sends them to the bridge. With no matching adapter it reads nothing.
+// It does not read comments, your account or other tabs.
 const CHECK_MS = 3000;       // check every 3 seconds
 const CAPTION_MS = 1000;     // check captions every second
 const HEARTBEAT_MS = 60000;  // "still watching" once a minute even without changes
@@ -17,29 +19,13 @@ let lastSeenUrl = "";
 let captionLines = [];       // last caption lines seen on screen
 let staleDesc = "";          // previous video's description (YouTube may update it late)
 
-function clean(text, max) {
-  return (text || "").replace(/\s+/g, " ").trim().slice(0, max);
-}
-
-function firstMatch(selectors) {
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    if (el && el.textContent && el.textContent.trim()) return el;
-  }
-  return null;
-}
-
-// Drop auto-caption tags like "[Music]" or note symbols; keep the real words.
-function cleanCaption(text) {
-  let t = clean(text, 200).replace(/\[[^\]]*\]/g, " ").replace(/[\u266A\u266B\u266C]/g, " ");
-  t = clean(t, 200);
-  if (/^(music|foreign|applause|laughter)$/i.test(t)) return "";
-  if (!/[\p{L}\p{N}]/u.test(t)) return "";
-  return t;
+// The first adapter that matches this page (or null).
+function currentAdapter() {
+  return ADAPTERS.find((a) => a.matches()) || null;
 }
 
 function readCaptions() {
-  if (location.pathname !== "/watch") return;
+  if (!currentAdapter()) return;
   const segs = document.querySelectorAll(".ytp-caption-segment");
   if (!segs.length) return;
   const line = cleanCaption(Array.from(segs).map((s) => s.textContent).join(" "));
@@ -49,27 +35,18 @@ function readCaptions() {
 }
 
 function readState() {
-  if (location.pathname !== "/watch") return null;
-  const h1 = document.querySelector("ytd-watch-metadata h1 yt-formatted-string, ytd-watch-metadata h1");
-  let title = h1 && h1.textContent ? h1.textContent.trim() : "";
-  if (!title) title = document.title.replace(/^\(\d+\)\s*/, "").replace(/\s*-\s*YouTube$/, "").trim();
-  if (!title || title === "YouTube") return null;
-  const ch = document.querySelector("ytd-watch-metadata ytd-channel-name a, #owner ytd-channel-name a");
-  const video = document.querySelector("video.html5-main-video, video");
-  // Only the video's own description text (not view counts, suggestions or other boxes).
-  // Order matters: a single comma-separated selector would return the outer container.
-  const desc = firstMatch([
-    "ytd-watch-metadata #description-inline-expander #expanded yt-attributed-string",
-    "ytd-watch-metadata #description-inline-expander #attributed-snippet-text",
-    "ytd-watch-metadata #description-inline-expander yt-attributed-string",
-  ]);
+  const adapter = currentAdapter();
+  if (!adapter) return null;
+  const info = adapter.readState();   // { title, channel, description } or null
+  if (!info) return null;
+  const video = adapter.pickVideo();
   return {
-    site: "YouTube",
-    title: title,
-    channel: ch && ch.textContent ? ch.textContent.trim() : "",
+    site: adapter.site,
+    title: info.title,
+    channel: info.channel,
     url: location.href.split("&")[0],
     paused: video ? video.paused : null,
-    description: desc ? clean(desc.textContent, DESC_MAX) : "",
+    description: clean(info.description, DESC_MAX),
     subtitle: clean(captionLines.join(" / "), SUBS_MAX),
   };
 }
@@ -165,8 +142,9 @@ browser.runtime.sendMessage({ type: "watch-along-hello" }).catch(() => {});
 browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "watch-along-playfirst") return playFirst();
   if (!msg || msg.type !== "watch-along-command") return;
-  const video = document.querySelector("video.html5-main-video, video");
-  if (location.pathname !== "/watch" || !video) return Promise.resolve("no video is open in the YouTube tab");
+  const adapter = currentAdapter();
+  const video = adapter ? adapter.pickVideo() : null;
+  if (!video) return Promise.resolve("no video is open in the YouTube tab");
   if (msg.action === "pause") {
     video.pause();
     return Promise.resolve("paused");
