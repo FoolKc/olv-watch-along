@@ -1,7 +1,7 @@
 # OLV Watch-Along
 
 A watch-along add-on for [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber).
-Your AI character sees what you are watching on YouTube, comments on it with you,
+Your AI character sees what you are watching on YouTube (including Shorts), comments on it with you,
 and controls playback when you ask by voice or text.
 
 > "Can you skip this song?" → the character skips it.
@@ -15,6 +15,7 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 ## Features
 
 - **Knows what you are watching:** title, channel, playing/paused, description and the captions on screen.
+- **YouTube Shorts:** sees the Short you stop on (scrolling past quickly does not trigger comments); pause, play and volume work there too.
 - **Comments on its own:** one short comment on each new video, and now and then on new captions (with cooldowns and a daily cap).
 - **Playback control:** pause, play, next, previous, volume up/down.
 - **"Play X":** searches YouTube and opens the first real result (not ads or Shorts), then tells you the actual title.
@@ -35,7 +36,7 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
                                           └──────────────────────────── watch_mcp.py ◄┘
 ```
 
-- **extension/**: reads the YouTube page and carries out playback commands.
+- **extension/**: reads the YouTube page and carries out playback commands. Each site has its own small adapter in `extension/adapters/` (YouTube watch pages, YouTube Shorts); `content.js` is the shared core.
 - **bridge/bridge.py**: small local server. Stores the current state in memory, sends spontaneous comments through Open-LLM-VTuber's proxy, and queues commands for the extension.
 - **mcp/watch_mcp.py**: MCP server that gives the character three tools: `get_watching`, `control_video`, `play_on_youtube`.
 
@@ -150,7 +151,7 @@ happened, so do not say it is done.
 
 - The bridge listens on `127.0.0.1` only and rejects requests coming from websites (Origin check).
   Commands can only be fetched with the extension's custom header.
-- The extension reads only YouTube `/watch` and search pages: title, channel, description and on-screen captions.
+- The extension reads only YouTube `/watch`, `/shorts/` and search pages: title, channel, description and on-screen captions.
   It does not read comments, your account or other tabs.
 - Everything the character sees is sent to the LLM you configured in Open-LLM-VTuber.
   If that is a cloud API, your watch history goes there too.
@@ -158,7 +159,8 @@ happened, so do not say it is done.
 ## Known limitations
 
 - YouTube only, Firefox-based browsers only.
-- YouTube changes its page layout from time to time; selectors in `content.js` may need updates.
+- YouTube changes its page layout from time to time; selectors in `extension/adapters/` may need updates.
+- On Shorts, "next" and "previous" are not supported (just scroll). The channel name may be empty there.
 - State lives in memory; restarting the bridge resets it (and the daily cap).
 
 ## Contributing

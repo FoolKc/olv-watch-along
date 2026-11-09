@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "OLV Watch-Along",
   "version": "0.3.0",
-  "description": "Tells a local Open-LLM-VTuber watch-along bridge (127.0.0.1 only) what you are watching on YouTube, and carries out the character's playback commands.",
+  "description": "Tells a local Open-LLM-VTuber watch-along bridge (127.0.0.1 only) what you are watching on YouTube (including Shorts), and carries out the character's playback commands.",
   "browser_specific_settings": {
     "gecko": {
       "id": "olv-watch-along@foolkc",
@@ -20,7 +20,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
-      "js": ["adapters/common.js", "adapters/youtube-watch.js", "content.js"],
+      "js": ["adapters/common.js", "adapters/youtube-watch.js", "adapters/youtube-shorts.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

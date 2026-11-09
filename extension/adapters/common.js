@@ -23,3 +23,21 @@ function cleanCaption(text) {
   if (!/[\p{L}\p{N}]/u.test(t)) return "";
   return t;
 }
+
+// Pick the right <video> on the page. Pages like Shorts have several:
+// the mini player (previous video), the one playing, and hidden upcoming videos.
+// Rule: the largest visible video that is playing > the largest visible video.
+// A video with zero size or outside the screen is never picked.
+function pickBestVideo() {
+  let bestPlaying = null, playingArea = 0;
+  let bestAny = null, anyArea = 0;
+  for (const v of document.querySelectorAll("video")) {
+    const r = v.getBoundingClientRect();
+    const area = r.width * r.height;
+    if (area <= 0) continue;                                    // hidden video
+    if (r.bottom <= 0 || r.top >= window.innerHeight) continue; // outside the screen
+    if (!v.paused && area > playingArea) { bestPlaying = v; playingArea = area; }
+    if (area > anyArea) { bestAny = v; anyArea = area; }
+  }
+  return bestPlaying || bestAny;
+}
