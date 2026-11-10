@@ -4,6 +4,10 @@ A watch-along add-on for [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Op
 Your AI character sees what you are watching on YouTube (including Shorts), comments on it with you,
 and controls playback when you ask by voice or text.
 
+![The character comments on a video that just started](docs/demo.gif)
+
+*The character comments on its own when a new video starts. Playback control (pause, play, skip, volume, "play X") works by voice or text; see Features below.*
+
 > "Can you skip this song?" → the character skips it.
 > "Turn it down a bit" → the character lowers the volume and tells you the new level.
 > "Play some lo-fi" → the character searches YouTube and starts the first real video.
