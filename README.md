@@ -97,7 +97,7 @@ Optional environment variables:
 ### 4. Load the extension
 
 - **For testing:** open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `extension/manifest.json`. Temporary add-ons are removed when the browser closes.
-- **Permanent:** Firefox only installs signed extensions. Change the `id` in `manifest.json` to your own, zip the three files, and sign it as an unlisted ("On your own") add-on on [addons.mozilla.org](https://addons.mozilla.org/developers/). Then install the signed `.xpi` from `about:addons`.
+- **Permanent:** Firefox only installs signed extensions. Change the `id` in `manifest.json` to your own, zip the contents of the `extension` folder (`manifest.json`, `background.js`, `content.js`, `adapters/`, `icons/`) so that `manifest.json` sits at the top level of the zip, and sign it as an unlisted ("On your own") add-on on [addons.mozilla.org](https://addons.mozilla.org/developers/). Then install the signed `.xpi` from `about:addons`.
 - Allow **Autoplay → Allow Audio and Video** for youtube.com, otherwise "play X" opens the video but it does not start.
 - Recommended: set **Run in Private Windows → Don't Allow** for the extension.
 
