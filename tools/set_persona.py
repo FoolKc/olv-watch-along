@@ -1,6 +1,8 @@
 """Replace persona_prompt in Open-LLM-VTuber's conf.yaml with the text of a persona file.
 
-Usage: python -I set_persona.py <conf.yaml> <persona.txt>
+Usage: python -I set_persona.py <conf.yaml> <persona.txt> [more.txt ...]
+- With several files, joins them in order with a blank line between them,
+  e.g. your persona + prompts/system_rules.txt + prompts/tool_rules.txt.
 - Saves the old persona as persona_old_<date>.txt next to the persona file.
 - After writing, reads the YAML back the way Open-LLM-VTuber does; on any problem it restores the original.
 """
@@ -10,10 +12,13 @@ from pathlib import Path
 
 import yaml
 
+if len(sys.argv) < 3:
+    sys.exit("Usage: python -I set_persona.py <conf.yaml> <persona.txt> [more.txt ...]")
 conf_path, persona_path = Path(sys.argv[1]), Path(sys.argv[2])
 original = conf_path.read_bytes().decode("utf-8")  # keep line endings as they are
 nl = "\r\n" if "\r\n" in original else "\n"
-persona = persona_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+persona = "\n\n".join(Path(p).read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+                       for p in sys.argv[2:])
 
 lines = original.split(nl)
 starts = [i for i, line in enumerate(lines) if line.startswith("  persona_prompt:")]

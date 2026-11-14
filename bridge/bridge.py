@@ -1,24 +1,28 @@
 """OLV Watch-Along bridge.
 
-Keeps in memory what the user is watching in the browser and now and then asks
-the Open-LLM-VTuber character for a short comment. Listens on 127.0.0.1 only.
-  POST /update          -> new state (from the extension, JSON)
-  POST /clear           -> forget the state
-  GET  /state           -> latest state (read by the MCP server)
-  GET  /comments        -> spontaneous comment status
-  POST /comments        -> {"enabled": true/false} to turn comments on/off
-  GET/POST /command     -> playback command queue (MCP server -> extension)
+Keeps in memory what the user is watching in the browser and now and then sends the
+Open-LLM-VTuber character an EVENT. No personality text lives here: the character only
+receives "[EVENT ...]" messages, and how to react is written in your prompt
+(see prompts/system_rules.txt). Listens on 127.0.0.1 only.
+  POST /update            -> new state (from the extension, JSON)
+  POST /clear             -> forget the state
+  GET  /state             -> latest state (read by the MCP server)
+  GET  /comments          -> spontaneous comment status
+  POST /comments          -> {"enabled": true/false}
+  GET  /turn              -> is the current turn started by the bridge? (the MCP server locks
+                             side-effect tools during those turns)
+  GET/POST /command       -> playback command queue (MCP server -> extension)
   GET/POST /command/result
-Comments are sent to the Open-LLM-VTuber proxy (ws://127.0.0.1:12393/proxy-ws) as
-text-input; every comment is one LLM request.
+Every event is one LLM request.
 
 Optional environment variables:
-  WATCH_USER_NAME  how the character should refer to you in system notes (default: "the user")
+  WATCH_USER_NAME  how events refer to you (default: "the user")
   OLV_DIR          Open-LLM-VTuber folder, used only for the mic mute flag (default: current folder)
 """
 import asyncio
 import json
 import os
+import re
 import time
 from datetime import date
 from pathlib import Path
@@ -27,7 +31,9 @@ import aiohttp
 from aiohttp import web
 
 HOST, PORT = "127.0.0.1", 12450
-FIELDS = ("site", "title", "channel", "url", "paused", "subtitle", "description")
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+EXT_HEADER = "X-Watch-Along"                       # sent by the extension when it asks for commands
+TEXT_FIELDS = ("site", "title", "channel", "url", "subtitle", "description")
 MAX_LEN = 500
 USER = os.environ.get("WATCH_USER_NAME", "the user")
 
@@ -37,11 +43,13 @@ COOLDOWN_S = 300              # at least 5 minutes between caption comments on t
 NEW_VIDEO_SETTLE_S = 15       # comment on each new video 15 s after it opens
 QUIET_AFTER_USER_S = 45       # no comments for 45 s after the user talks to the character
 STALE_S = 150                 # no update from the extension for 150 s = not watching
-DAILY_CAP = 60                # max comments per day
-RESPECT_MUTE = False          # True: no comments while the mic mute flag exists (F8)
+DAILY_CAP = 60                # max events per day (comments + check-ins)
+RESPECT_MUTE = False          # True: no events while the mic mute flag exists (F8)
 MUTE_FLAG = Path(os.environ.get("OLV_DIR", ".")) / "mic_muted.flag"
 PROXY_URL = "ws://127.0.0.1:12393/proxy-ws"
-REPLY_TIMEOUT_S = 90          # clear the queue if a comment does not finish in 90 s (e.g. frontend closed)
+REPLY_TIMEOUT_S = 90          # clear the queue if a reply does not finish in 90 s (e.g. frontend closed)
+
+# --- Idle check-in settings ---
 CHECKINS_ENABLED = True       # character speaks up after a long silence
 IDLE_CHECKIN_S = 600          # after 10 minutes of silence
 CHECKIN_REPEAT_S = 1800       # if there is no answer, at most every 30 minutes
@@ -58,6 +66,7 @@ rt = {
     "last_char": 0.0, "last_checkin": 0.0, "connected_at": 0.0,
     "day": date.today().isoformat(), "count": 0,
     "command": None, "cmd_id": 0, "ext_seen": 0.0, "results": {},
+    "last_event": 0.0, "event_started": False, "release_on_start": False,
 }
 
 
@@ -65,33 +74,59 @@ def log(msg: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
 
 
-def from_website(request: web.Request) -> bool:
-    return request.headers.get("Origin", "").startswith(("http://", "https://"))
-
-
 def deny() -> web.Response:
     return web.json_response({"ok": False, "error": "forbidden"}, status=403)
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def clean_text(value: str) -> str:
+    """Drop control characters and collapse whitespace."""
+    return " ".join(_CONTROL.sub(" ", value).split())
+
+
+def for_prompt(value) -> str:
+    """Text from the video is written by strangers: make sure it cannot open fake tags or fake events."""
+    text = clean_text(str(value or ""))
+    return text.replace("<", "(").replace(">", ")").replace("[", "(").replace("]", ")")
+
+
+# ---------------- Protection ----------------
+@web.middleware
+async def guard(request: web.Request, handler):
+    # 1) DNS rebinding: reject requests whose Host header is not 127.0.0.1/localhost.
+    if request.host not in ALLOWED_HOSTS:
+        return deny()
+    # 2) Websites open in the browser (and sandboxed "null" origins) must not get in. The extension's
+    #    origin is moz-extension://; the MCP server and PowerShell send no Origin at all.
+    origin = request.headers.get("Origin")
+    if origin is not None and not origin.startswith(("moz-extension://", "chrome-extension://")):
+        return deny()
+    return await handler(request)
+
+
+async def read_json(request: web.Request):
+    if request.content_type != "application/json":
+        return None
+    try:
+        return await request.json()
+    except Exception:
+        return None
+
+
 # ---------------- HTTP ----------------
 async def update(request: web.Request) -> web.Response:
-    # Random websites open in the browser must not be able to write here.
-    if request.content_type != "application/json":
-        return web.json_response({"ok": False, "error": "application/json required"}, status=415)
-    if from_website(request):
-        return deny()
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "JSON expected"}, status=400)
-    if not isinstance(data, dict) or not data.get("title"):
-        return web.json_response({"ok": False, "error": "'title' required"}, status=400)
+    data = await read_json(request)
+    if not isinstance(data, dict) or not isinstance(data.get("title"), str) or not data["title"].strip():
+        return web.json_response({"ok": False, "error": "JSON with 'title' required"}, status=400)
 
     new = {}
-    for key in FIELDS:
-        if key in data:
-            value = data[key]
-            new[key] = value[:MAX_LEN] if isinstance(value, str) else value
+    for key in TEXT_FIELDS:
+        if isinstance(data.get(key), str):
+            new[key] = clean_text(data[key])[:MAX_LEN]
+    if isinstance(data.get("paused"), bool):
+        new["paused"] = data["paused"]
     new["updated_at"] = time.time()
 
     if (new.get("url"), new.get("title")) != (state.get("url"), state.get("title")):
@@ -103,8 +138,6 @@ async def update(request: web.Request) -> web.Response:
 
 
 async def clear(request: web.Request) -> web.Response:
-    if from_website(request):
-        return deny()
     state.clear()
     log("[cleared]")
     return web.json_response({"ok": True})
@@ -119,10 +152,10 @@ async def get_state(request: web.Request) -> web.Response:
 
 async def comments(request: web.Request) -> web.Response:
     if request.method == "POST":
-        if from_website(request) or request.content_type != "application/json":
-            return deny()
-        data = await request.json()
-        rt["enabled"] = bool(data.get("enabled"))
+        data = await read_json(request)
+        if not isinstance(data, dict) or "enabled" not in data:
+            return web.json_response({"ok": False, "error": 'expected {"enabled": true/false}'}, status=400)
+        rt["enabled"] = bool(data["enabled"])
         log(f"[comments] {'ON' if rt['enabled'] else 'OFF'}")
     reset_day()
     return web.json_response({
@@ -134,16 +167,34 @@ async def comments(request: web.Request) -> web.Response:
     })
 
 
+async def turn(request: web.Request) -> web.Response:
+    """Asked by the MCP server: is the character answering a bridge event right now? If so, no
+    side-effect tools. last_event_ago_s: seconds since the last event (event text stays in the
+    chat history, so tools that change things can treat that time as untrusted)."""
+    return web.json_response({
+        "system_turn": bool(rt["pending_since"]),
+        "last_event_ago_s": int(time.time() - rt["last_event"]) if rt["last_event"] else None,
+    })
+
+
 # ---------------- Proxy connection ----------------
 def handle_proxy_message(data: dict) -> None:
     kind = data.get("type")
     if kind == "user-input-transcription":
-        rt["last_user"] = time.time()          # the user spoke or typed
+        rt["last_user"] = time.time()
+        if rt["pending_since"] and rt["event_started"]:
+            rt["release_on_start"] = True      # unlock when the user's own turn STARTS, not mid-event
     elif kind == "control":
         if data.get("text") == "conversation-chain-start":
             rt["busy"], rt["busy_since"] = True, time.time()
+            if rt["pending_since"] and not rt["event_started"]:
+                rt["event_started"] = True     # this chain is the bridge's event
+            elif rt["pending_since"] and rt["release_on_start"]:
+                rt["pending_since"] = 0.0      # this chain is the user's: tools unlocked
+                rt["event_started"] = rt["release_on_start"] = False
         elif data.get("text") == "conversation-chain-end":
             rt["busy"], rt["pending_since"], rt["last_char"] = False, 0.0, time.time()
+            rt["event_started"] = rt["release_on_start"] = False
 
 
 async def proxy_loop(app: web.Application) -> None:
@@ -171,27 +222,41 @@ async def proxy_loop(app: web.Application) -> None:
             await asyncio.sleep(10)
 
 
-# ---------------- Comment gate ----------------
+# ---------------- Events ----------------
+EVENT_HEAD = f"(sent by the watch-along system, not typed by {USER})"
+
+
 def reset_day() -> None:
     today = date.today().isoformat()
     if rt["day"] != today:
         rt["day"], rt["count"] = today, 0
 
 
-def build_prompt(s: dict, new_video: bool) -> str:
-    who = f'"{s.get("title")}"' + (f' by {s["channel"]}' if s.get("channel") else "")
-    note = f"(Watch-along note from the system, not typed by {USER}.)"
-    if new_video:
-        text = f"{note} {USER} just started watching {who} on {s.get('site', 'the web')}."
-    else:
-        text = f"{note} {USER} is still watching {who} on {s.get('site', 'the web')}."
+def watch_event(s: dict, new_video: bool) -> str:
+    lines = [f"[EVENT {'new_video' if new_video else 'captions'}] {EVENT_HEAD}",
+             f"site: {for_prompt(s.get('site') or 'web')}",
+             f"title: {for_prompt(s.get('title'))}"]
+    if s.get("channel"):
+        lines.append(f"channel: {for_prompt(s['channel'])}")
+    data = []
     if s.get("description"):
-        text += f" Description: {s['description']}"
+        data.append(f"description: {for_prompt(s['description'])}")
     if s.get("subtitle"):
-        text += f" Recent subtitles: {s['subtitle']}"
-    text += (" Make one short spontaneous comment, one or two sentences, like you are watching it together."
-             " Do not repeat the title word for word. No spoilers. Do not use any tools or search the web.")
-    return text
+        data.append(f"recent subtitles: {for_prompt(s['subtitle'])}")
+    if data:
+        lines += ["<video_data>", *data, "</video_data>"]
+    return "\n".join(lines)
+
+
+def idle_event(minutes: int) -> str:
+    return f"[EVENT idle] {EVENT_HEAD}\nquiet_minutes: {minutes}"
+
+
+async def send_event(ws, text: str) -> None:
+    await ws.send_json({"type": "text-input", "text": text})
+    rt["pending_since"] = rt["last_event"] = time.time()
+    rt["event_started"] = rt["release_on_start"] = False
+    rt["count"] += 1
 
 
 async def comment_loop(app: web.Application) -> None:
@@ -204,6 +269,18 @@ async def comment_loop(app: web.Application) -> None:
             log(f"[error] {e}")
 
 
+def can_send(now: float):
+    """Shared gate: may an event be sent now? Returns the websocket if so."""
+    ws = rt["ws"]
+    if not rt["enabled"] or ws is None or rt["busy"] or rt["pending_since"]:
+        return None
+    if RESPECT_MUTE and MUTE_FLAG.exists():
+        return None
+    if rt["count"] >= DAILY_CAP:
+        return None
+    return ws
+
+
 async def maybe_comment() -> None:
     now = time.time()
     reset_day()
@@ -213,13 +290,11 @@ async def maybe_comment() -> None:
     if rt["pending_since"] and ws is not None and now - rt["pending_since"] > REPLY_TIMEOUT_S:
         await ws.send_json({"type": "interrupt-signal", "text": ""})
         rt["pending_since"], rt["busy"] = 0.0, False
-        log("[character] comment reply did not finish (frontend closed?), queue cleared")
+        rt["event_started"] = rt["release_on_start"] = False
+        log("[character] reply did not finish (frontend closed?), queue cleared")
         return
-    if not rt["enabled"] or ws is None or rt["busy"] or rt["pending_since"]:
-        return
-    if RESPECT_MUTE and MUTE_FLAG.exists():
-        return
-    if rt["count"] >= DAILY_CAP:
+    ws = can_send(now)
+    if ws is None:
         return
     if not state or state.get("paused") or now - state["updated_at"] > STALE_S:
         return
@@ -236,20 +311,17 @@ async def maybe_comment() -> None:
         return                                  # same video, nothing new
 
     snapshot = dict(state)
-    await ws.send_json({"type": "text-input", "text": build_prompt(snapshot, new_video)})
+    await send_event(ws, watch_event(snapshot, new_video))
     rt["last_comment"], rt["last_key"], rt["last_subtitle"] = now, key, subtitle
-    rt["pending_since"] = now
-    rt["count"] += 1
     log(f"[comment] requested ({'new video' if new_video else 'new captions'}) {rt['count']}/{DAILY_CAP} | {snapshot.get('title')}")
 
 
-# ---------------- Idle check-in ----------------
 async def maybe_checkin() -> None:
     now = time.time()
-    ws = rt["ws"]
-    if not CHECKINS_ENABLED or not rt["enabled"] or ws is None or rt["busy"] or rt["pending_since"]:
+    if not CHECKINS_ENABLED:
         return
-    if rt["count"] >= DAILY_CAP:
+    ws = can_send(now)
+    if ws is None:
         return
     quiet_since = max(rt["last_user"], rt["last_char"], rt["connected_at"])
     if now - quiet_since < IDLE_CHECKIN_S:
@@ -257,36 +329,25 @@ async def maybe_checkin() -> None:
     if rt["last_checkin"] and now - rt["last_checkin"] < CHECKIN_REPEAT_S:
         return
     minutes = int((now - quiet_since) // 60)
-    text = (f"(System note, not typed by {USER}.) {USER} has been quiet for about {minutes} minutes."
-            " Check in gently in one or two short sentences: ask how they are doing or what they are up to,"
-            " in your own words. Do not mention this note. Do not use any tools.")
-    await ws.send_json({"type": "text-input", "text": text})
-    rt["last_checkin"] = rt["pending_since"] = now
-    rt["count"] += 1
-    log(f"[check-in] {minutes} min of silence, character checks in {rt['count']}/{DAILY_CAP}")
+    await send_event(ws, idle_event(minutes))
+    rt["last_checkin"] = now
+    log(f"[check-in] {minutes} min of silence {rt['count']}/{DAILY_CAP}")
 
 
 # ---------------- Playback control ----------------
-ACTIONS = ("pause", "play", "next", "previous", "search", "louder", "quieter")
-COMMAND_TTL_S = 15            # a command expires if the extension does not pick it up in 15 s
-EXT_SEEN_S = 10               # extension has not polled in the last 10 s = browser not connected
+ACTIONS = ("pause", "play", "next", "previous", "search", "quieter", "louder")
+COMMAND_TTL_S = 15            # a command the extension does not pick up within 15 s expires
+EXT_SEEN_S = 10               # no poll from the extension in 10 s = browser not connected
 
 
 async def command(request: web.Request) -> web.Response:
-    if from_website(request):
-        return deny()
     now = time.time()
     if request.method == "POST":               # from the MCP server
-        if request.content_type != "application/json":
-            return deny()
-        try:
-            data = await request.json()
-        except Exception:
-            data = None
+        data = await read_json(request)
         action = data.get("action") if isinstance(data, dict) else None
         if action not in ACTIONS:
             return web.json_response({"ok": False, "error": f"unknown action: {action}"}, status=400)
-        query = str(data.get("query", "")).strip()[:150] if action == "search" else ""
+        query = clean_text(str(data.get("query", "")))[:150] if action == "search" else ""
         if action == "search" and not query:
             return web.json_response({"ok": False, "error": "search needs a query"}, status=400)
         if now - rt["ext_seen"] > EXT_SEEN_S:
@@ -295,24 +356,20 @@ async def command(request: web.Request) -> web.Response:
         rt["command"] = {"id": rt["cmd_id"], "action": action, "query": query, "at": now}
         log(f"[command] #{rt['cmd_id']} {action} {query}".rstrip())
         return web.json_response({"ok": True, "id": rt["cmd_id"]})
-    if request.headers.get("X-Watch-Along") != "1":  # GET: extension only
+    if request.headers.get(EXT_HEADER) != "1":                        # GET: extension only
         return deny()
     rt["ext_seen"] = now
     cmd, rt["command"] = rt["command"], None
     if not cmd or now - cmd["at"] > COMMAND_TTL_S:
         return web.json_response({"command": None})
-    return web.json_response({"command": {"id": cmd["id"], "action": cmd["action"], "query": cmd.get("query", "")}})
+    return web.json_response({"command": {"id": cmd["id"], "action": cmd["action"], "query": cmd["query"]}})
 
 
 async def command_result(request: web.Request) -> web.Response:
-    if from_website(request):
-        return deny()
     if request.method == "POST":               # from the extension
-        if request.content_type != "application/json":
-            return deny()
+        data = await read_json(request)
         try:
-            data = await request.json()
-            cid, result = int(data.get("id")), str(data.get("result", ""))[:200]
+            cid, result = int(data.get("id")), clean_text(str(data.get("result", "")))[:200]
         except Exception:
             return web.json_response({"ok": False, "error": "bad result"}, status=400)
         rt["results"][cid] = result
@@ -338,13 +395,14 @@ async def stop_background(app: web.Application) -> None:
 
 
 def main() -> None:
-    app = web.Application()
+    app = web.Application(middlewares=[guard], client_max_size=64 * 1024)
     app.add_routes([
         web.post("/update", update),
         web.post("/clear", clear),
         web.get("/state", get_state),
         web.get("/comments", comments),
         web.post("/comments", comments),
+        web.get("/turn", turn),
         web.get("/command", command),
         web.post("/command", command),
         web.get("/command/result", command_result),

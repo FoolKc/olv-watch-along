@@ -26,6 +26,7 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 - **Idle check-in:** after a long silence the character checks in on you (optional).
 - **Hotkeys (Windows, optional):** F9 turns comments on/off, F8 mutes the mic.
 - **Local only:** the bridge listens on `127.0.0.1` only. YouTube only. No accounts, no cloud service of its own.
+- **Prompt-injection aware:** video titles, descriptions and captions are treated as data, and the playback tools are locked while the character reacts to a video on its own.
 
 ## How it works
 
@@ -41,8 +42,9 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 ```
 
 - **extension/**: reads the YouTube page and carries out playback commands. Each site has its own small adapter in `extension/adapters/` (YouTube watch pages, YouTube Shorts); `content.js` is the shared core.
-- **bridge/bridge.py**: small local server. Stores the current state in memory, sends spontaneous comments through Open-LLM-VTuber's proxy, and queues commands for the extension.
+- **bridge/bridge.py**: small local server. Stores the current state in memory, sends short `[EVENT ...]` messages (new video, new captions, idle) through Open-LLM-VTuber's proxy, and queues commands for the extension. It contains no personality text: how the character reacts is up to your prompt.
 - **mcp/watch_mcp.py**: MCP server that gives the character three tools: `get_watching`, `control_video`, `play_on_youtube`.
+- **prompts/**: rules to add to your character's prompt: how to react to events, how to treat outside text, and how to use the tools.
 
 ## Requirements
 
@@ -85,7 +87,20 @@ In `conf.yaml`, under `agent_settings` → `basic_memory_agent`, make sure tools
 
 Restart Open-LLM-VTuber after changing these files.
 
-### 3. Start the bridge
+### 3. Add the rules to your prompt
+
+The bridge sends events like `[EVENT new_video]`, and the character needs to know what they mean.
+Add the two files in `prompts/` after your own persona. `tools/set_persona.py` can do it for you
+(close Open-LLM-VTuber first; it backs up the old persona and checks the YAML afterwards):
+
+```
+C:/path/to/Open-LLM-VTuber/.venv/Scripts/python.exe -I tools/set_persona.py C:/path/to/Open-LLM-VTuber/conf.yaml my_persona.txt prompts/system_rules.txt prompts/tool_rules.txt
+```
+
+You can edit both files freely, for example to give the idle check-in your character's own flavor.
+Start a new chat afterwards.
+
+### 4. Start the bridge
 
 ```
 C:/path/to/Open-LLM-VTuber/.venv/Scripts/python.exe bridge/bridge.py
@@ -95,17 +110,17 @@ Optional environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WATCH_USER_NAME` | `the user` | How the system notes refer to you, e.g. your name |
+| `WATCH_USER_NAME` | `the user` | How events refer to you, e.g. your name |
 | `OLV_DIR` | current folder | Open-LLM-VTuber folder (only used for the F8 mute flag) |
 
-### 4. Load the extension
+### 5. Load the extension
 
 - **For testing:** open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `extension/manifest.json`. Temporary add-ons are removed when the browser closes.
 - **Permanent:** Firefox only installs signed extensions. Change the `id` in `manifest.json` to your own, zip the contents of the `extension` folder (`manifest.json`, `background.js`, `content.js`, `adapters/`, `icons/`) so that `manifest.json` sits at the top level of the zip, and sign it as an unlisted ("On your own") add-on on [addons.mozilla.org](https://addons.mozilla.org/developers/). Then install the signed `.xpi` from `about:addons`.
 - Allow **Autoplay → Allow Audio and Video** for youtube.com, otherwise "play X" opens the video but it does not start.
 - Recommended: set **Run in Private Windows → Don't Allow** for the extension.
 
-### 5. Hotkeys (optional, Windows)
+### 6. Hotkeys (optional, Windows)
 
 - `hotkeys/comments_toggle.ahk`: **F9** turns spontaneous comments and idle check-ins on/off. Shows a small tooltip.
 - `hotkeys/mic_mute.ahk`: **F8** mutes/unmutes the microphone. Needs a one-time patch: run `tools/patch_mute.py` from the Open-LLM-VTuber folder (it keeps a `.bak` backup). Set `olvDir` at the top of the script.
@@ -137,24 +152,20 @@ Each spontaneous comment is one LLM request; each playback command is usually tw
 Open-LLM-VTuber's chat memory stores only the text of replies, not the tool calls.
 After a few commands the model can see "skip the song" → "Skipped." in the history
 without any tool call and start copying that, answering without actually calling the tool.
-The tool descriptions already warn against this. If it still happens, add a line like this
-to your persona:
-
-```
-Video control: every time the user asks you to pause, play, skip, go back or open something,
-call control_video or play_on_youtube in that same reply, even if you did the same thing a
-moment ago. The chat history does not show your earlier tool calls, but they happened, so
-never answer a request like that with words only. If you did not call the tool, nothing
-happened, so do not say it is done.
-```
-
-`tools/set_persona.py` can write a persona text file into `conf.yaml` safely
-(it backs up the old persona and checks the YAML afterwards). Starting a new chat also helps.
+`prompts/tool_rules.txt` already contains a rule against this (setup step 3). If it still
+happens, make sure the rules are in your prompt and start a new chat.
 
 ## Privacy and security
 
-- The bridge listens on `127.0.0.1` only and rejects requests coming from websites (Origin check).
-  Commands can only be fetched with the extension's custom header.
+- The bridge listens on `127.0.0.1` only and rejects requests coming from websites (Origin check)
+  and requests with a foreign `Host` header (DNS rebinding). Commands can only be fetched with
+  the extension's custom header.
+- Video titles, descriptions and captions are written by strangers. The bridge and the MCP server
+  clean them so they cannot fake an event or close the `<video_data>` block, and `prompts/system_rules.txt`
+  tells the character to treat them as information only.
+- While the character is reacting to an event (a turn you did not start), `control_video` and
+  `play_on_youtube` refuse to run, so text inside a video cannot make the character act on its own.
+  This is enforced in code, not only in the prompt.
 - The extension reads only YouTube `/watch`, `/shorts/` and search pages: title, channel, description and on-screen captions.
   It does not read comments, your account or other tabs.
 - Everything the character sees is sent to the LLM you configured in Open-LLM-VTuber.
