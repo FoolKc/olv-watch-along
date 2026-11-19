@@ -13,7 +13,7 @@ const SUBS_MAX = 400;
 const SUBS_LINES = 6;
 const DESC_STALE_MS = 20000;  // on a new video, ignore the old description for up to 20 s
 
-let lastSent = null;         // { url, title, paused, description, subtitle, time }
+let lastSent = null;         // { url, title, paused, description, subtitle, chapter, time }
 let urlChangedAt = 0;
 let lastSeenUrl = "";
 let captionLines = [];       // last caption lines seen on screen
@@ -37,9 +37,10 @@ function readCaptions() {
 function readState() {
   const adapter = currentAdapter();
   if (!adapter) return null;
-  const info = adapter.readState();   // { title, channel, description } or null
+  const info = adapter.readState();   // { title, channel, description, chapter? } or null
   if (!info) return null;
   const video = adapter.pickVideo();
+  const sec = (x) => (video && isFinite(x) && x >= 0 ? Math.floor(x) : null);
   return {
     site: adapter.site,
     title: info.title,
@@ -48,6 +49,9 @@ function readState() {
     paused: video ? video.paused : null,
     description: clean(info.description, DESC_MAX),
     subtitle: clean(captionLines.join(" / "), SUBS_MAX),
+    chapter: clean(info.chapter || "", 150),          // chapter playing now (in a mix: the current song)
+    position: sec(video && video.currentTime),        // seconds into the video
+    duration: sec(video && video.duration),
   };
 }
 
@@ -76,7 +80,7 @@ function check() {
   }
 
   const changed = !lastSent || s.url !== lastSent.url || s.title !== lastSent.title ||
-    s.paused !== lastSent.paused || s.description !== lastSent.description;
+    s.paused !== lastSent.paused || s.description !== lastSent.description || s.chapter !== lastSent.chapter;
   const subsChanged = lastSent && s.subtitle !== lastSent.subtitle && now - lastSent.time >= SUBS_EVERY_MS;
   const heartbeat = lastSent && now - lastSent.time >= HEARTBEAT_MS;
   if (!changed && !subsChanged && !heartbeat) return;
@@ -84,7 +88,7 @@ function check() {
   // In a background tab, only real changes; no captions or "still watching".
   if (!changed && document.hidden) return;
 
-  lastSent = { url: s.url, title: s.title, paused: s.paused, description: s.description, subtitle: s.subtitle, time: now };
+  lastSent = { url: s.url, title: s.title, paused: s.paused, description: s.description, subtitle: s.subtitle, chapter: s.chapter, time: now };
   browser.runtime.sendMessage({ type: "watch-along-update", state: s }).catch(() => {});
 }
 

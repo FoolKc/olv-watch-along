@@ -33,7 +33,7 @@ from aiohttp import web
 HOST, PORT = "127.0.0.1", 12450
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 EXT_HEADER = "X-Watch-Along"                       # sent by the extension when it asks for commands
-TEXT_FIELDS = ("site", "title", "channel", "url", "subtitle", "description")
+TEXT_FIELDS = ("site", "title", "channel", "url", "subtitle", "description", "chapter")
 MAX_LEN = 500
 USER = os.environ.get("WATCH_USER_NAME", "the user")
 
@@ -127,6 +127,10 @@ async def update(request: web.Request) -> web.Response:
             new[key] = clean_text(data[key])[:MAX_LEN]
     if isinstance(data.get("paused"), bool):
         new["paused"] = data["paused"]
+    for key in ("position", "duration"):        # seconds into the video / its length (0 to 24 h)
+        v = data.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 86400:
+            new[key] = int(v)
     new["updated_at"] = time.time()
 
     if (new.get("url"), new.get("title")) != (state.get("url"), state.get("title")):
@@ -147,7 +151,14 @@ async def get_state(request: web.Request) -> web.Response:
     if not state:
         return web.json_response({"watching": False})
     age = int(time.time() - state["updated_at"])
-    return web.json_response({"watching": True, "age_seconds": age, **state})
+    out = {"watching": True, "age_seconds": age, **state}
+    # The extension writes at most once a minute while nothing changes: add the time since then
+    if isinstance(state.get("position"), int) and not state.get("paused"):
+        pos = state["position"] + age
+        if isinstance(state.get("duration"), int) and state["duration"] > 0:
+            pos = min(pos, state["duration"])
+        out["position"] = pos
+    return web.json_response(out)
 
 
 async def comments(request: web.Request) -> web.Response:
@@ -241,6 +252,8 @@ def watch_event(s: dict, new_video: bool) -> str:
     data = []
     if s.get("description"):
         data.append(f"description: {for_prompt(s['description'])}")
+    if s.get("chapter"):
+        data.append(f"playing now (current chapter/song): {for_prompt(s['chapter'])}")
     if s.get("subtitle"):
         data.append(f"recent subtitles: {for_prompt(s['subtitle'])}")
     if data:

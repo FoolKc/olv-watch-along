@@ -84,10 +84,20 @@ def _send_command(body: dict) -> tuple[dict | None, str | None]:
     return r, None
 
 
+def _mmss(sec: int) -> str:
+    """Seconds as 23:33 or 1:02:05."""
+    sec = int(sec)
+    h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 @mcp.tool()
 def get_watching() -> str:
-    """Get what the user is watching in their web browser right now: site, title, channel,
-    playing or paused, the video description and the subtitles on screen."""
+    """Get what the user is watching or listening to in their web browser right now: site, title,
+    channel, playing or paused, how far into the video they are, the part/song playing now, the
+    description and the subtitles on screen. Call it every time they ask about the song or part
+    playing now (e.g. "this song", "what do you think of this one"), because in a long mix the song
+    changes and the chat history only shows what was playing earlier."""
     try:
         s = _bridge("/state", timeout=2)
     except Exception:
@@ -102,7 +112,12 @@ def get_watching() -> str:
         lines.append(f"Channel: {_safe(s['channel'])}")
     if s.get("paused") is not None:
         lines.append("Status: paused" if s["paused"] else "Status: playing")
+    if isinstance(s.get("position"), int):
+        lines.append(f"Position: {_mmss(s['position'])}" + (f" of {_mmss(s['duration'])}" if s.get("duration") else ""))
     data = []
+    if s.get("chapter"):
+        data.append(f"PLAYING NOW (current chapter / song of this video): {_safe(s['chapter'])}. "
+                    "The description may list many songs; only this one is playing right now.")
     if s.get("description"):
         data.append(f"Description: {_safe(s['description'])}")
     if s.get("subtitle"):

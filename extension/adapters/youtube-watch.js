@@ -27,10 +27,14 @@ ADAPTERS.push({
       "ytd-watch-metadata #description-inline-expander yt-attributed-string",
     ]);
 
+    // Chapter title: in a long mix, the song playing now. Empty if the video has no chapters.
+    const chap = document.querySelector("#movie_player .ytp-chapter-title-content");
+
     return {
       title: title,
       channel: ch && ch.textContent ? ch.textContent.trim() : "",
       description: desc ? desc.textContent : "",
+      chapter: chap && chap.textContent ? chap.textContent.trim() : "",
     };
   },
 });

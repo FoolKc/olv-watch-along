@@ -19,6 +19,7 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 ## Features
 
 - **Knows what you are watching:** title, channel, playing/paused, description and the captions on screen.
+- **Knows where you are in the video:** the current position and, in videos with chapters, the chapter playing now (in a long music mix, the current song).
 - **YouTube Shorts:** sees the Short you stop on (scrolling past quickly does not trigger comments); pause, play and volume work there too.
 - **Comments on its own:** one short comment on each new video, and now and then on new captions (with cooldowns and a daily cap).
 - **Playback control:** pause, play, next, previous, volume up/down.
