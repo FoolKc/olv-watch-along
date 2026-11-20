@@ -18,6 +18,8 @@ let urlChangedAt = 0;
 let lastSeenUrl = "";
 let captionLines = [];       // last caption lines seen on screen
 let staleDesc = "";          // previous video's description (YouTube may update it late)
+let missing = 0;             // checks in a row without a video on the page
+let forceSend = false;       // send the state again even if nothing changed (tab came to the front)
 
 // The first adapter that matches this page (or null).
 function currentAdapter() {
@@ -63,7 +65,15 @@ function check() {
     staleDesc = lastSent ? lastSent.description : "";
   }
   const s = readState();
-  if (!s) return;
+  if (!s) {
+    // No video for about 9 s (not just a page loading): tell the bridge to forget the old one.
+    if (lastSent && ++missing >= 3) {
+      lastSent = null;
+      browser.runtime.sendMessage({ type: "watch-along-clear" }).catch(() => {});
+    }
+    return;
+  }
+  missing = 0;
   const now = Date.now();
 
   // On a new video, a description identical to the previous one is not updated yet: don't send it.
@@ -79,7 +89,7 @@ function check() {
     return;
   }
 
-  const changed = !lastSent || s.url !== lastSent.url || s.title !== lastSent.title ||
+  const changed = forceSend || !lastSent || s.url !== lastSent.url || s.title !== lastSent.title ||
     s.paused !== lastSent.paused || s.description !== lastSent.description || s.chapter !== lastSent.chapter;
   const subsChanged = lastSent && s.subtitle !== lastSent.subtitle && now - lastSent.time >= SUBS_EVERY_MS;
   const heartbeat = lastSent && now - lastSent.time >= HEARTBEAT_MS;
@@ -89,8 +99,16 @@ function check() {
   if (!changed && document.hidden) return;
 
   lastSent = { url: s.url, title: s.title, paused: s.paused, description: s.description, subtitle: s.subtitle, chapter: s.chapter, time: now };
-  browser.runtime.sendMessage({ type: "watch-along-update", state: s }).catch(() => {});
+  forceSend = false;
+  browser.runtime.sendMessage({ type: "watch-along-update", state: s, visible: !document.hidden }).catch(() => {});
 }
+
+// When this tab comes to the front, report again so commands go to the video you are looking at.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !lastSent) return;
+  forceSend = true;
+  check();
+});
 
 setInterval(readCaptions, CAPTION_MS);
 setInterval(check, CHECK_MS);

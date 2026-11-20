@@ -6,13 +6,13 @@
 const BRIDGE = "http://127.0.0.1:12450";
 const POLL_MS = 2000;
 const SEARCH_WAIT_MS = 20000;
-let youtubeTab = null;      // the YouTube tab that reported most recently
+let youtubeTab = null;      // the YouTube tab you are watching: commands go here, only its state is sent
 let pendingSearch = null;   // { tabId, id, until }: open the first result once the search page loads
 
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (!msg) return;
   if (msg.type === "watch-along-hello" && sender.tab) {
-    youtubeTab = sender.tab.id;
+    if (youtubeTab === null) youtubeTab = sender.tab.id;
     const p = pendingSearch;
     if (p && p.tabId === sender.tab.id && Date.now() < p.until) {
       pendingSearch = null;
@@ -22,8 +22,17 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     }
     return;
   }
+  if (msg.type === "watch-along-clear") {
+    // The watched tab left the video (for example to the home page): forget the old video.
+    if (sender.tab && sender.tab.id === youtubeTab) clearBridge();
+    return;
+  }
   if (msg.type !== "watch-along-update") return;
-  if (sender.tab) youtubeTab = sender.tab.id;
+  if (sender.tab) {
+    // A tab you are looking at takes over; a tab in the background only if there is no other.
+    if (youtubeTab === null || msg.visible) youtubeTab = sender.tab.id;
+    if (sender.tab.id !== youtubeTab) return;
+  }
   fetch(BRIDGE + "/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -31,6 +40,17 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   })
     .then((r) => console.log("[Watch-Along] sent:", r.status, msg.state.title))
     .catch((e) => console.log("[Watch-Along] bridge may be offline:", e.message));
+});
+
+function clearBridge() {
+  fetch(BRIDGE + "/clear", { method: "POST" }).catch(() => {});
+}
+
+// The watched tab was closed: the character should not think the video is still on.
+browser.tabs.onRemoved.addListener((tabId) => {
+  if (tabId !== youtubeTab) return;
+  youtubeTab = null;
+  clearBridge();
 });
 
 function report(id, result) {
