@@ -7,3 +7,4 @@ __pycache__/
 conf.yaml
 persona*.txt
 Claude outputs/
+start_bridge.bat

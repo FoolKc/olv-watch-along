@@ -47,6 +47,24 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 - **mcp/watch_mcp.py**: MCP server that gives the character three tools: `get_watching`, `control_video`, `play_on_youtube`.
 - **prompts/**: rules to add to your character's prompt: how to react to events, how to treat outside text, and how to use the tools.
 
+## Quick setup (Windows)
+
+No coding needed. You only need a working Open-LLM-VTuber (installed with `uv`, as in its own guide).
+
+1. **Download this project:** on GitHub, click **Code → Download ZIP** and unzip it anywhere (for example in Documents).
+2. **Close Open-LLM-VTuber**, then double-click **`setup.bat`** in the unzipped folder. Drag your Open-LLM-VTuber folder into the window, press Enter and answer the question.
+   It backs up and edits `conf.yaml` and `mcp_servers.json` for you, adds the rules to the end of your persona, and creates `start_bridge.bat`.
+3. **Install the browser extension** (Firefox or Zen): [OLV Watch-Along on addons.mozilla.org](https://addons.mozilla.org/firefox/addon/olv-watch-along/). For youtube.com, allow **Autoplay → Allow Audio and Video**.
+4. **Start Open-LLM-VTuber.** In its settings, change the WebSocket URL to `ws://127.0.0.1:12393/proxy-ws` (only once).
+5. **Double-click `start_bridge.bat`** and keep that window open. Start a new chat and open a YouTube video.
+
+From then on, you only start Open-LLM-VTuber and `start_bridge.bat`.
+
+- To see what setup would change without changing anything, open a terminal in the folder and run `setup.bat --dry-run`.
+- To remove it again, double-click `undo_setup.bat`.
+- Run `setup.bat` again after updating this project; it updates the rules instead of adding them twice.
+- If Windows will not run `setup.bat` from the ZIP, right-click the ZIP before unzipping → **Properties** → tick **Unblock**, then unzip again.
+
 ## Requirements
 
 - A working [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber) install (tested with v1.2.1) and an LLM that supports tool calling.
@@ -54,7 +72,9 @@ Open-LLM-VTuber setup first; this add-on plugs into it.
 - Python packages `aiohttp` and `mcp` (both already in Open-LLM-VTuber's virtual environment).
 - Optional: [AutoHotkey v2](https://www.autohotkey.com/) for the hotkeys (Windows).
 
-## Setup
+## Manual setup
+
+Use this instead of `setup.bat` if you want to do each step yourself, or if you are not on Windows.
 
 ### 1. Turn on the Open-LLM-VTuber proxy
 
@@ -116,6 +136,7 @@ Optional environment variables:
 
 ### 5. Load the extension
 
+- **Easiest:** install it from [addons.mozilla.org](https://addons.mozilla.org/firefox/addon/olv-watch-along/).
 - **For testing:** open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `extension/manifest.json`. Temporary add-ons are removed when the browser closes.
 - **Permanent:** Firefox only installs signed extensions. Change the `id` in `manifest.json` to your own, zip the contents of the `extension` folder (`manifest.json`, `background.js`, `content.js`, `adapters/`, `icons/`) so that `manifest.json` sits at the top level of the zip, and sign it as an unlisted ("On your own") add-on on [addons.mozilla.org](https://addons.mozilla.org/developers/). Then install the signed `.xpi` from `about:addons`.
 - Allow **Autoplay → Allow Audio and Video** for youtube.com, otherwise "play X" opens the video but it does not start.
